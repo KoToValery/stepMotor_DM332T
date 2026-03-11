@@ -2,6 +2,12 @@
 """
 Dedicated Stepper Motor Controller for DM332T Driver via PCA9685
 Uses hardware PWM for precise pulse generation
+
+IMPORTANT LIMITATIONS:
+- PCA9685 maximum PWM frequency: 1526 Hz
+- This limits maximum motor speed to ~1526 steps/second
+- With 1000 steps/revolution motor: max 1.5 rev/sec = 91 RPM
+- Global frequency affects ALL 16 PCA9685 channels
 """
 import json
 import logging
@@ -71,9 +77,20 @@ class PCA9685:
         return self.bus.read_byte_data(self.address, reg)
 
     def set_pwm_freq(self, freq_hz: float):
-        """Set the PWM frequency for all channels"""
+        """
+        Set the PWM frequency for all channels
+        
+        IMPORTANT: This sets the frequency for ALL 16 channels!
+        Maximum frequency: 1526 Hz (limited by prescaler range 3-255)
+        
+        Formula: freq = 25MHz / (4096 × (prescale + 1))
+        """
+        # Clamp frequency to valid range
+        freq_hz = max(24, min(1526, freq_hz))
+        
         prescale = int(round(OSC_HZ / (4096.0 * float(freq_hz)) - 1.0))
         prescale = max(3, min(255, prescale))
+        
         oldmode = self._read8(MODE1)
         sleepmode = (oldmode & 0x7F) | MODE1_SLEEP
         self._write8(MODE1, sleepmode)
@@ -157,10 +174,20 @@ CH_PULSE = int(config.get("stepper_pulse_channel", 9))
 CH_DIR = int(config.get("stepper_dir_channel", 7))
 CH_ENA = int(config.get("stepper_ena_channel", 8))
 
-MAX_SPEED_HZ = int(config.get("max_speed_hz", 1000))
-DEFAULT_SPEED_HZ = int(config.get("default_speed_hz", 200))
+MAX_SPEED_HZ = min(int(config.get("max_speed_hz", 1500)), 1526)  # PCA9685 limit!
+DEFAULT_SPEED_HZ = int(config.get("default_speed_hz", 500))
 STEPS_PER_REV = int(config.get("steps_per_revolution", 1000))
-MICROSTEPS = int(config.get("microsteps", 1))
+MICROSTEPS = int(config.get("microsteps", 2))
+
+# Log PCA9685 limitations
+logger.info("=" * 60)
+logger.info("PCA9685 LIMITATIONS:")
+logger.info("  Maximum PWM frequency: 1526 Hz")
+logger.info("  Configured max speed: %d Hz", MAX_SPEED_HZ)
+logger.info("  Steps per revolution: %d", STEPS_PER_REV)
+logger.info("  Microsteps: %d", MICROSTEPS)
+logger.info("  Max motor speed: %.1f RPM", (MAX_SPEED_HZ / STEPS_PER_REV) * 60)
+logger.info("=" * 60)
 
 # MQTT topics
 AVAIL_TOPIC = "homeassistant/stepper_motor/availability"
@@ -240,10 +267,21 @@ def set_stepper_direction(direction: str):
 
 
 def set_stepper_speed(speed_hz: float):
-    """Set stepper motor speed in Hz (steps per second)"""
+    """
+    Set stepper motor speed in Hz (steps per second)
+    
+    IMPORTANT: Limited to 1526 Hz by PCA9685 hardware
+    """
     global stepper_speed_hz
-    stepper_speed_hz = max(1.0, min(float(MAX_SPEED_HZ), float(speed_hz)))
-    logger.info("Stepper speed set to %.1f Hz", stepper_speed_hz)
+    # Enforce PCA9685 limit
+    speed_hz = max(1.0, min(1526.0, float(speed_hz)))
+    stepper_speed_hz = max(1.0, min(float(MAX_SPEED_HZ), speed_hz))
+    
+    if speed_hz > 1526:
+        logger.warning("Speed %d Hz exceeds PCA9685 limit (1526 Hz), clamped to 1526 Hz", speed_hz)
+    
+    logger.info("Stepper speed set to %.1f Hz (%.1f RPM)", 
+                stepper_speed_hz, (stepper_speed_hz / STEPS_PER_REV) * 60)
 
 
 def set_stepper_microsteps(microsteps: int):
@@ -297,18 +335,31 @@ def stop_stepper_motion():
 
 
 def stepper_motion_worker():
-    """Worker thread for stepper motor motion using hardware PWM"""
+    """
+    Worker thread for stepper motor motion using hardware PWM
+    
+    IMPORTANT: This changes the GLOBAL PCA9685 frequency!
+    All 16 channels will operate at the stepper motor frequency
+    while the motor is running.
+    """
     global stepper_running
     
     try:
         steps_remaining = stepper_steps
         speed = stepper_speed_hz
         
+        # Enforce PCA9685 limit
+        if speed > 1526:
+            logger.warning("Speed %.1f Hz exceeds PCA9685 limit, clamping to 1526 Hz", speed)
+            speed = 1526
+        
+        logger.info("Setting PCA9685 frequency to %.1f Hz (affects ALL channels!)", speed)
+        
         # Calculate PWM duty cycle (50% for square wave)
         duty_cycle = 50.0
         
         # Set PWM frequency to match step speed
-        # Note: This changes the global PCA9685 frequency
+        # IMPORTANT: This changes the global PCA9685 frequency for ALL channels!
         pca.set_pwm_freq(speed)
         
         # Enable PWM on pulse channel

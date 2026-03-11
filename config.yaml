@@ -1,7 +1,7 @@
-name: "Stepper Motor Controller"
+name: "Stepper Motor DM332T"
 version: "1.0.0"
 slug: "stepper-motor-dm332t"
-description: "Dedicated Stepper Motor Controller for DM332T via PCA9685"
+description: "Stepper Motor Controller for DM332T via PCA9685 (max 1526Hz)"
 init: false
 arch:
   - aarch64
@@ -29,10 +29,10 @@ options:
   stepper_pulse_channel: 9
   stepper_dir_channel: 7
   stepper_ena_channel: 8
-  max_speed_hz: 1000
-  default_speed_hz: 200
+  max_speed_hz: 1500
+  default_speed_hz: 500
   steps_per_revolution: 1000
-  microsteps: 1
+  microsteps: 2
 schema:
   mqtt_host: str
   mqtt_port: port
@@ -43,7 +43,7 @@ schema:
   stepper_pulse_channel: int(0,15)
   stepper_dir_channel: int(0,15)
   stepper_ena_channel: int(0,15)
-  max_speed_hz: int(1,2000)
+  max_speed_hz: int(1,1526)
   default_speed_hz: int(1,1000)
   steps_per_revolution: int(1,10000)
   microsteps: int(1,256)

@@ -1,7 +1,18 @@
-/config.yaml
-/Dockerfile
-/run.py
+
 /17HS15-1684S-PG5_Full_Datasheet.pdf
 /DM332T_Manual (1).pdf
 /README_STEPPER.md
 /WIRING_GUIDE.md
+COMPARISON.md
+PATCH_INSTRUCTIONS.md
+QUICK_START.md
+README_FINAL.md
+run_FIXED_SOFTWARE.py
+run_FIXED.py
+TECHNICAL_EXPLANATION.md
+CRITICAL_ISSUE.md
+REALISTIC_SOLUTION.md
+.gitignore
+FINAL_INSTRUCTIONS.md
+stepper_addon_config.yaml
+stepper_config.yaml
