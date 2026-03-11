@@ -1,0 +1,49 @@
+name: "Stepper Motor Controller"
+version: "1.0.0"
+slug: "stepper-motor-dm332t"
+description: "Dedicated Stepper Motor Controller for DM332T via PCA9685"
+init: false
+arch:
+  - aarch64
+  - armv7
+  - armhf
+  - amd64
+startup: "services"
+boot: auto
+host_network: true
+homeassistant_api: true
+map:
+  - config
+  - dev
+kernel_modules:
+  - i2c-dev
+devices:
+  - /dev/i2c-1:/dev/i2c-1:rw
+options:
+  mqtt_host: "core-mosquitto"
+  mqtt_port: 1883
+  mqtt_username: "mqtt"
+  mqtt_password: "mqtt_password"
+  pca_address: "0x40"
+  pca_frequency: 1000
+  stepper_pulse_channel: 9
+  stepper_dir_channel: 7
+  stepper_ena_channel: 8
+  max_speed_hz: 1000
+  default_speed_hz: 200
+  steps_per_revolution: 1000
+  microsteps: 1
+schema:
+  mqtt_host: str
+  mqtt_port: port
+  mqtt_username: str?
+  mqtt_password: password?
+  pca_address: match(^0x[0-9A-Fa-f]{2}$)
+  pca_frequency: int(24,1526)
+  stepper_pulse_channel: int(0,15)
+  stepper_dir_channel: int(0,15)
+  stepper_ena_channel: int(0,15)
+  max_speed_hz: int(1,2000)
+  default_speed_hz: int(1,1000)
+  steps_per_revolution: int(1,10000)
+  microsteps: int(1,256)
