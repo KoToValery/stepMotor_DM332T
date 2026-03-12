@@ -107,8 +107,8 @@ class PCA9685:
         channel = int(channel)
         if not (0 <= channel <= 15):
             raise ValueError("channel must be 0..15")
-        on = int(max(0, min(4095, on)))
-        off = int(max(0, min(4095, off)))
+        on = int(max(0, min(4096, on)))
+        off = int(max(0, min(4096, off)))
 
         reg = LED0_ON_L + 4 * channel
         data = [on & 0xFF, (on >> 8) & 0xFF, off & 0xFF, (off >> 8) & 0xFF]
@@ -121,12 +121,12 @@ class PCA9685:
         self.set_pwm(channel, 0, duty_12bit)
 
     def channel_on(self, channel: int):
-        """Turn channel fully on"""
-        self.set_pwm(channel, 0, 4095)
+        """Turn channel fully on using FULL_ON bit (unaffected by PWM frequency)"""
+        self.set_pwm(channel, 0x1000, 0)  # FULL_ON bit in ON_H register
 
     def channel_off(self, channel: int):
-        """Turn channel fully off"""
-        self.set_pwm(channel, 0, 0)
+        """Turn channel fully off using FULL_OFF bit (unaffected by PWM frequency)"""
+        self.set_pwm(channel, 0, 0x1000)  # FULL_OFF bit in OFF_H register
 
 
 def load_config():
@@ -204,12 +204,6 @@ TOPIC_SPEED_STATE = "homeassistant/number/stepper_speed/state"
 TOPIC_STEPS_CMD = "homeassistant/number/stepper_steps/set"
 TOPIC_STEPS_STATE = "homeassistant/number/stepper_steps/state"
 
-TOPIC_REVOLUTIONS_CMD = "homeassistant/number/stepper_revolutions/set"
-TOPIC_REVOLUTIONS_STATE = "homeassistant/number/stepper_revolutions/state"
-
-TOPIC_MICROSTEPS_CMD = "homeassistant/select/stepper_microsteps/set"
-TOPIC_MICROSTEPS_STATE = "homeassistant/select/stepper_microsteps/state"
-
 TOPIC_RUN_CMD = "homeassistant/button/stepper_run/press"
 TOPIC_STOP_CMD = "homeassistant/button/stepper_stop/press"
 
@@ -235,8 +229,6 @@ stepper_enabled = False
 stepper_direction = "CW"  # CW or CCW
 stepper_speed_hz = float(DEFAULT_SPEED_HZ)
 stepper_steps = 0
-stepper_revolutions = 0.0
-stepper_microsteps = MICROSTEPS
 stepper_running = False
 stepper_lock = threading.Lock()
 stepper_thread = None
@@ -284,20 +276,7 @@ def set_stepper_speed(speed_hz: float):
                 stepper_speed_hz, (stepper_speed_hz / STEPS_PER_REV) * 60)
 
 
-def set_stepper_microsteps(microsteps: int):
-    """Set microstep resolution"""
-    global stepper_microsteps
-    valid_microsteps = [1, 2, 4, 8, 16, 32, 64, 128, 256]
-    if microsteps in valid_microsteps:
-        stepper_microsteps = microsteps
-        logger.info("Microsteps set to %d", stepper_microsteps)
-    else:
-        logger.warning("Invalid microsteps value: %d", microsteps)
 
-
-def calculate_steps_from_revolutions(revolutions: float) -> int:
-    """Calculate total steps from revolutions"""
-    return int(revolutions * STEPS_PER_REV * stepper_microsteps)
 
 
 def start_stepper_motion(steps: int):
@@ -317,8 +296,8 @@ def start_stepper_motion(steps: int):
         stepper_running = True
         stepper_thread = threading.Thread(target=stepper_motion_worker, daemon=True)
         stepper_thread.start()
-        logger.info("Started stepper motion: %d steps at %.1f Hz (microsteps: %d)", 
-                   steps, stepper_speed_hz, stepper_microsteps)
+        logger.info("Started stepper motion: %d steps at %.1f Hz", 
+                   steps, stepper_speed_hz)
 
 
 def stop_stepper_motion():
@@ -341,6 +320,12 @@ def stepper_motion_worker():
     IMPORTANT: This changes the GLOBAL PCA9685 frequency!
     All 16 channels will operate at the stepper motor frequency
     while the motor is running.
+    
+    DM332T timing requirements (from manual section 10):
+    - t3: Pulse width not less than 7.5µs
+    - t4: Low level width not less than 7.5µs
+    - Minimum frequency: 1 / (7.5µs × 2) ≈ 66.7 Hz
+    - Maximum safe frequency with 50% duty: ~66,666 Hz (but PCA9685 limits to 1526 Hz)
     """
     global stepper_running
     
@@ -352,6 +337,14 @@ def stepper_motion_worker():
         if speed > 1526:
             logger.warning("Speed %.1f Hz exceeds PCA9685 limit, clamping to 1526 Hz", speed)
             speed = 1526
+        
+        # Check DM332T minimum pulse width requirement
+        if speed > 0:
+            pulse_width_us = (1000000.0 / speed) / 2.0  # 50% duty cycle
+            if pulse_width_us < 7.5:
+                logger.warning("Pulse width %.2f µs is below DM332T minimum (7.5 µs)!", pulse_width_us)
+                max_safe_speed = 1000000.0 / (7.5 * 2.0)
+                logger.warning("Maximum safe speed: %.1f Hz", max_safe_speed)
         
         logger.info("Setting PCA9685 frequency to %.1f Hz (affects ALL channels!)", speed)
         
@@ -449,16 +442,6 @@ def publish_discovery():
             "icon": "mdi:speedometer",
             "device": device_info,
         }),
-        ("select", "stepper_microsteps", {
-            "name": "Microsteps",
-            "unique_id": "stepper_microsteps",
-            "command_topic": TOPIC_MICROSTEPS_CMD,
-            "state_topic": TOPIC_MICROSTEPS_STATE,
-            "availability_topic": AVAIL_TOPIC,
-            "options": ["1", "2", "4", "8", "16", "32", "64", "128", "256"],
-            "icon": "mdi:stairs",
-            "device": device_info,
-        }),
         ("number", "stepper_steps", {
             "name": "Stepper Steps",
             "unique_id": "stepper_steps",
@@ -471,20 +454,6 @@ def publish_discovery():
             "unit_of_measurement": "steps",
             "mode": "box",
             "icon": "mdi:counter",
-            "device": device_info,
-        }),
-        ("number", "stepper_revolutions", {
-            "name": "Revolutions",
-            "unique_id": "stepper_revolutions",
-            "command_topic": TOPIC_REVOLUTIONS_CMD,
-            "state_topic": TOPIC_REVOLUTIONS_STATE,
-            "availability_topic": AVAIL_TOPIC,
-            "min": 0,
-            "max": 100,
-            "step": 0.1,
-            "unit_of_measurement": "rev",
-            "mode": "box",
-            "icon": "mdi:rotate-360",
             "device": device_info,
         }),
         ("button", "stepper_run", {
@@ -515,9 +484,11 @@ def publish_discovery():
     client.publish(TOPIC_ENABLE_STATE, "OFF", retain=True)
     client.publish(TOPIC_DIR_STATE, stepper_direction, retain=True)
     client.publish(TOPIC_SPEED_STATE, str(int(stepper_speed_hz)), retain=True)
-    client.publish(TOPIC_MICROSTEPS_STATE, str(stepper_microsteps), retain=True)
     client.publish(TOPIC_STEPS_STATE, str(stepper_steps), retain=True)
-    client.publish(TOPIC_REVOLUTIONS_STATE, str(stepper_revolutions), retain=True)
+    
+    # Clear removed entities from MQTT
+    client.publish("homeassistant/select/stepper_microsteps/config", "", retain=True)
+    client.publish("homeassistant/number/stepper_revolutions/config", "", retain=True)
 
     logger.info("MQTT discovery published")
 
@@ -532,9 +503,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
     client.subscribe(TOPIC_ENABLE_CMD)
     client.subscribe(TOPIC_DIR_CMD)
     client.subscribe(TOPIC_SPEED_CMD)
-    client.subscribe(TOPIC_MICROSTEPS_CMD)
     client.subscribe(TOPIC_STEPS_CMD)
-    client.subscribe(TOPIC_REVOLUTIONS_CMD)
     client.subscribe(TOPIC_RUN_CMD)
     client.subscribe(TOPIC_STOP_CMD)
     
@@ -544,7 +513,6 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 
 def on_message(client, userdata, msg):
     """MQTT message callback"""
-    global stepper_revolutions
     topic = msg.topic
     payload = msg.payload.decode("utf-8").strip()
 
@@ -563,27 +531,14 @@ def on_message(client, userdata, msg):
             set_stepper_speed(speed)
             client.publish(TOPIC_SPEED_STATE, str(int(stepper_speed_hz)), retain=True)
 
-        elif topic == TOPIC_MICROSTEPS_CMD:
-            microsteps = int(payload)
-            set_stepper_microsteps(microsteps)
-            client.publish(TOPIC_MICROSTEPS_STATE, str(stepper_microsteps), retain=True)
-
         elif topic == TOPIC_STEPS_CMD:
-            steps = int(payload)
-            client.publish(TOPIC_STEPS_STATE, str(steps), retain=True)
-
-        elif topic == TOPIC_REVOLUTIONS_CMD:
-            revolutions = float(payload)
-            stepper_revolutions = revolutions
-            # Calculate and update steps
-            steps = calculate_steps_from_revolutions(revolutions)
-            client.publish(TOPIC_REVOLUTIONS_STATE, str(revolutions), retain=True)
-            client.publish(TOPIC_STEPS_STATE, str(steps), retain=True)
+            global stepper_steps
+            stepper_steps = int(payload)
+            client.publish(TOPIC_STEPS_STATE, str(stepper_steps), retain=True)
 
         elif topic == TOPIC_RUN_CMD:
             # Get current steps value
-            steps = stepper_steps if stepper_steps > 0 else calculate_steps_from_revolutions(stepper_revolutions)
-            start_stepper_motion(steps)
+            start_stepper_motion(stepper_steps)
 
         elif topic == TOPIC_STOP_CMD:
             stop_stepper_motion()
