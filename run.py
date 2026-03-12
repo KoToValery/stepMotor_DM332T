@@ -61,6 +61,7 @@ class PCA9685:
         self.address = address
         self.bus = SMBus(bus_num)
         self._write8(MODE1, MODE1_AI)
+        # Use Totem Pole output, standard logic (not inverted)
         self._write8(MODE2, MODE2_OUTDRV)
         time.sleep(0.01)
 
@@ -121,12 +122,12 @@ class PCA9685:
         self.set_pwm(channel, 0, duty_12bit)
 
     def channel_on(self, channel: int):
-        """Turn channel fully on using FULL_ON bit (unaffected by PWM frequency)"""
-        self.set_pwm(channel, 0x1000, 0)  # FULL_ON bit in ON_H register
+        """Turn channel fully ON (HIGH) using FULL_ON bit"""
+        self.set_pwm(channel, 0x1000, 0)
 
     def channel_off(self, channel: int):
-        """Turn channel fully off using FULL_OFF bit (unaffected by PWM frequency)"""
-        self.set_pwm(channel, 0, 0x1000)  # FULL_OFF bit in OFF_H register
+        """Turn channel fully OFF (LOW) using FULL_OFF bit"""
+        self.set_pwm(channel, 0, 0x1000)
 
 
 def load_config():
@@ -235,26 +236,26 @@ stepper_thread = None
 
 
 def set_stepper_enable(enabled: bool):
-    """Enable or disable stepper motor"""
+    """Enable or disable stepper motor (NPN logic: HIGH=Enabled)"""
     global stepper_enabled
     stepper_enabled = enabled
     if enabled:
-        pca.channel_off(CH_ENA)  # DM332T: LOW = enabled
+        pca.channel_on(CH_ENA)   # NPN: HIGH = enabled
         logger.info("Stepper motor ENABLED")
     else:
-        pca.channel_on(CH_ENA)  # DM332T: HIGH = disabled
+        pca.channel_off(CH_ENA)  # NPN: LOW = disabled
         stop_stepper_motion()
         logger.info("Stepper motor DISABLED")
 
 
 def set_stepper_direction(direction: str):
-    """Set stepper motor direction"""
+    """Set stepper motor direction (NPN logic: HIGH=CW, LOW=CCW)"""
     global stepper_direction
     stepper_direction = "CCW" if direction == "CCW" else "CW"
     if stepper_direction == "CW":
-        pca.channel_on(CH_DIR)  # HIGH = CW
+        pca.channel_on(CH_DIR)   # NPN: HIGH = CW
     else:
-        pca.channel_off(CH_DIR)  # LOW = CCW
+        pca.channel_off(CH_DIR)  # NPN: LOW = CCW
     logger.info("Stepper direction set to %s", stepper_direction)
 
 
@@ -382,9 +383,9 @@ def stepper_motion_worker():
 
 
 # Initialize channels
-pca.channel_off(CH_PULSE)
-pca.channel_on(CH_ENA)  # Disabled by default
-pca.channel_on(CH_DIR)  # CW by default
+pca.channel_off(CH_PULSE)  # LOW
+pca.channel_off(CH_ENA)    # LOW (Disabled)
+pca.channel_on(CH_DIR)     # HIGH (CW)
 
 # MQTT client setup
 try:
@@ -558,9 +559,9 @@ def safe_shutdown(signum=None, frame=None):
         stop_stepper_motion()
         set_stepper_enable(False)
         
-        pca.channel_off(CH_PULSE)
-        pca.channel_on(CH_ENA)
-        pca.channel_off(CH_DIR)
+        pca.channel_off(CH_PULSE)  # LOW
+        pca.channel_off(CH_ENA)    # LOW (Disabled)
+        pca.channel_on(CH_DIR)     # HIGH (CW)
 
         client.publish(AVAIL_TOPIC, "offline", retain=True)
         client.loop_stop()
