@@ -1,5 +1,5 @@
 name: "Stepper Motor DM332T"
-version: "1.0.0"
+version: "1.0.1"
 slug: "stepper-motor-dm332t"
 description: "Stepper Motor Controller for DM332T via PCA9685 (max 1526Hz)"
 init: false
